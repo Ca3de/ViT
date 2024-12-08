@@ -2,7 +2,7 @@ Below is a suggested README.md you can place in your GitHub repository. This REA
 
 Vision Transformer (ViT) with Knowledge Distillation & Fine-Tuning on CIFAR-10
 
-Author: Israel Oladeji, Harshita Parsup
+Author: Israel Oladeji, Harshita Pasupuleti
 Forked from: Google Research Vision Transformer repository
 
 Introduction
