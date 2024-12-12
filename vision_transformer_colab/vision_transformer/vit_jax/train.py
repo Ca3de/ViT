@@ -36,11 +36,14 @@ from vit_jax import utils
 
 def make_update_fn(*, apply_fn, accum_steps, tx,
                    teacher_apply_fn=None, teacher_params=None,
-                   alpha=0.5, temperature=2.0):
+                   alpha=0.5, temperature=2.0,
+                   label_smoothing=0.1):
+  """Returns update step for data parallel training with optional KD and label smoothing."""
+
   def cross_entropy_loss(*, logits, labels):
     logp = jax.nn.log_softmax(logits)
     return -jnp.mean(jnp.sum(logp * labels, axis=1))
-    
+
   def kl_divergence(p_logits, q_logits, temperature):
     p = jax.nn.log_softmax(p_logits / temperature)
     q = jax.nn.softmax(q_logits / temperature)
@@ -51,13 +54,29 @@ def make_update_fn(*, apply_fn, accum_steps, tx,
     dropout_rng = jax.random.fold_in(rng, jax.lax.axis_index('batch'))
 
     def loss_fn(params, images, labels):
+      # Apply label smoothing to the one-hot labels
+      # labels shape: [batch_size, num_classes]
+      # With smoothing, each non-true class label is slightly >0 instead of 0.
+      num_classes = labels.shape[-1]
+      smooth_value = label_smoothing / (num_classes - 1)
+      # True class gets (1 - label_smoothing), others get smooth_value
+      labels = (1 - label_smoothing) * labels + smooth_value * (1 - labels)
+
       # Student forward pass
-      student_logits = apply_fn(dict(params=params), rngs=dict(dropout=dropout_rng), inputs=images, train=True)
+      student_logits = apply_fn(
+          dict(params=params),
+          rngs=dict(dropout=dropout_rng),
+          inputs=images,
+          train=True)
+
       ce_loss = cross_entropy_loss(logits=student_logits, labels=labels)
 
       # If teacher is provided, compute KD loss
       if teacher_params is not None and teacher_apply_fn is not None:
-        teacher_logits = teacher_apply_fn(dict(params=teacher_params), inputs=images, train=False)
+        teacher_logits = teacher_apply_fn(
+            dict(params=teacher_params),
+            inputs=images,
+            train=False)
         kd_loss = kl_divergence(student_logits, teacher_logits, temperature)
         total_loss = (1 - alpha)*ce_loss + alpha*kd_loss
         return total_loss
@@ -75,6 +94,7 @@ def make_update_fn(*, apply_fn, accum_steps, tx,
     return params, opt_state, l, new_rng
 
   return jax.pmap(update_fn, axis_name='batch', donate_argnums=(0,))
+
 
 
 def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
